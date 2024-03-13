@@ -89,7 +89,9 @@ f mf_mm_sort.hlp
 f mf_mm_ddens.hlp
 f mf_mm_root.hlp
 f moremata14_source.hlp
-f npiv.ado
-f npiv.sthlp
-f npivcv.ado
-f npivcv.sthlp
+f bspline.ado
+f bspline.sthlp
+f frencurv.ado
+f frencurv.sthlp
+f flexcurv.ado
+f flexcurv.sthlp
