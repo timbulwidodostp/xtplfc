@@ -1,7 +1,7 @@
 #delimit ;
 capture program drop bspline;
-program define bspline,rclass;
-version 6.0;
+program define bspline, rclass;
+version 16.0;
 /*
  Create a set of B-splines of specified power
  corresponding to a specified X-variable and a specified set of knots.
@@ -9,22 +9,39 @@ version 6.0;
  and an ascending sequence of knots in knots,
  to be extended on left and right if exknot specified.
  Generate, as output, a set of B-splines in varlist,
- (or a set of B-splines prefixed by generate,
+ (or a set of B-splines prefixed by generatee,
  if varlist is absent),
  with type as specified in type,
- and variable labels generated using format labfmt if present,
+ and variable labels generateed using format labfmt if present,
  or format of X-variable otherwise.
 *! Author: Roger Newson
-*! Date: 20 October 2003
+*! Date: 03 April 2020
 */
 
-syntax [ newvarlist ] [if] [in]
-  ,Xvar(varname numeric)
-  [Knots(numlist ascending min=2) noEXKnot
+syntax [ newvarlist ] [if] [in] ,
+  Xvar(varname numeric)
+  [Knots(numlist min=2) noEXKnot
   Power(integer 0)
   Generate(string) Type(string)
-  LABfmt(string)]
-  ;
+  LABfmt(string) LABPrefix(string)
+  ];
+/*
+ xvar() is the input X-variable.
+ knots() specifies the knots.
+ noexknot specifies that the knots will not be extended.
+ power() specifies the power of the spline.
+ generate() specifies the prefix of the names of the generated splines.
+ type() specifies the storage type of the generated splines.
+ labfmt() specifies the format to be used in the spline variable labels.
+ labprefix() specifies the prefix to be used in the spline variable labels.
+*/
+
+*
+ Set default label prefix
+*;
+if `"`labprefix'"'=="" {;
+  local labprefix "B-spline on ";
+};
 
 * Rename varlist to splist *;
 local splist "`varlist'";macro drop varlist;
@@ -50,12 +67,16 @@ mark `touse' `if' `in';markout `touse' `xvar';
 *
  Check that there are observations
  and initialize knots if necessary
+ and sort knots, discarding duplicates
 *;
 quietly summarize `xvar' if(`touse');
 if((r(N)<=0)|(r(N)==.)){;error 2000;};
 else if("`knots'"==""){;
   local rmin=r(min);local rmax=r(max);local knots "`rmin' `rmax'";
 };
+numlist "`knots'", sort;
+local knots "`r(numlist)'";
+local knots: list uniq knots;
 
 * Extend knots if requested *;
 if("`exknot'"!="noexknot"){;
@@ -64,7 +85,7 @@ if("`exknot'"!="noexknot"){;
 };
 
 *
- Initialise local macros splist, nknot, nspline and generat
+ Initialise local macros splist, nknot, nspline and generatee
  (if necessary)
 *;
 local nknot:word count `knots';
@@ -72,12 +93,12 @@ local nknot:word count `knots';
 if("`splist'"!=""){;
   * Spline list has been provided by user *;
   local nspline:word count `splist';
-  * Set generate prefix (for column names of knot matrix) *;
-  if("`generat'"==""){;local generat="c";};
+  * Set generatee prefix (for column names of knot matrix) *;
+  if("`generate'"==""){;local generate="c";};
 };
 else{;
   * Spline list must be generated *;
-  if("`generat'"==""){;
+  if("`generate'"==""){;
     disp in red
      "Spline list unspecified - generate() or varlist required";
     error 498;
@@ -89,10 +110,10 @@ else{;
     local nspline=`nknot'-`power'-1;
     if(`nspline'<=0){;local nspline=1;};
     * Generate spline list *;
-    local splist "`generat'1";
+    local splist "`generate'1";
     local i1=1;
     while(`i1'<`nspline'){;local i1=`i1'+1;
-      local splist "`splist' `generat'`i1'";
+      local splist "`splist' `generate'`i1'";
     };
   };
 };
@@ -133,6 +154,10 @@ else if(`nknot'<`nspline'+`power'+1){;
     local nknot:word count `knots';
   };
 };
+if `nknot'>c(matsize) {;
+  disp as error "Too many knots for current matsize.";
+  error 908;
+};
 
 *
  Check that generated spline and knot names are not too long
@@ -141,7 +166,7 @@ else if(`nknot'<`nspline'+`power'+1){;
 *;
 local lastsp:word `nspline' of `splist';
 confirm name `lastsp';
-local lastkn="`generat'`nknot'";
+local lastkn="`generate'`nknot'";
 confirm name `lastkn';
 
 * Generate label format from X-variate if necessary *;
@@ -207,7 +232,8 @@ while(`i1'<`nspline'){;local i1=`i1'+1;
   matr def `knotvc'=`knotv'[1,`i1'..`i2'];
   * Call _bspline *;
   _bspline `splcur' if(`touse'),
-    knotv(`knotvc') xvar(`xvar') type(`type') labfmt(`labfmt');
+    knotv(`knotvc') xvar(`xvar') type(`type')
+    labfmt(`labfmt') labprefix(`"`labprefix'"');
 };
 
 *
@@ -218,7 +244,7 @@ while(`i1'<`nspline'){;local i1=`i1'+1;
 local knotnam "`splist'";
 local i1=`nspline';
 while(`i1'<`nknot'){;local i1=`i1'+1;
-  local knotnam "`knotnam' `generat'`i1'";
+  local knotnam "`knotnam' `generate'`i1'";
 };
 matr colnames `knotv'=`knotnam';
 
@@ -267,33 +293,35 @@ drop `incomp';
 
 * Return results *;
 return local xvar "`xvar'";
-return local power "`power'";
-return local nspline "`nspline'";
-return local nknot "`nknot'";
+return scalar power=`power';
+return scalar nspline=`nspline';
+return scalar nknot=`nknot';
 return local type "`type'";
+return local labprefix `"`labprefix'"';
 return local labfmt "`labfmt'";
 return local splist "`splist'";
 return local knots "`knots'";
-return local nincomp "`nincomp'";
+return scalar nincomp=`nincomp';
 return scalar xinf=`xinf';
 return scalar xsup=`xsup';
 return matrix knotv `knotv';
 end;
 
 capture program drop _bspline;
-program define _bspline,rclass;
-version 6.0;
+program define _bspline, rclass;
+version 10.0;
 syntax newvarname [if] [in]
  ,Knotv(string) Xvar(varlist numeric min=1 max=1)
- Type(string) LABfmt(string);
+ Type(string) LABfmt(string) LABPrefix(string);
 *
  Create B-spline in single variable of varlist
- corresponding to X-variate in xvar
+ corresponding to X-variate in xvar()
  and knots in row vector in knotv
  (whose column names are the plus-function variables
  originating at the respective knots)
- with type in type
+ with type in type()
  and label specifying a range of X-values formatted by labfmt
+ and prefixed by labprefix()
 *;
 
 * Local macros *;
@@ -349,13 +377,16 @@ quietly while(`i1'<`powp1'){;local i1=`i1'+1;
 * Variable label and format for B-spline *;
 local fsmin=string(`smin',"`labfmt'");
 local fsmax=string(`smax',"`labfmt'");
-label variable `bspline' "B-spline on [`fsmin',`fsmax')";
+label variable `bspline' "`labprefix'[`fsmin',`fsmax')";
 format `bspline' %8.4f;
+char `bspline'[xsup] `smax';
+char `bspline'[xinf] `smin';
+char `bspline'[xvar] "`xvar'";
 
 end;
 
 program define nlext,rclass;
-version 6.0;
+version 10.0;
 *
  Take, as input, an input numlist in inlist
  and extend it to the left (if left present)

@@ -1,7 +1,7 @@
 #delimit ;
 capture program drop frencurv;
 program define frencurv,rclass;
-version 6.0;
+version 16.0;
 /*
  Create a set of splines of specified power
  corresponding to a specified X-variable
@@ -21,17 +21,42 @@ version 6.0;
  and variable labels generated using format labfmt if present,
  or format of X-variable otherwise.
 *! Author: Roger Newson
-*! Date: 21 December 2004
+*! Date: 16 July 2022
 */
 
-syntax [ newvarlist ] [if] [in]
-  ,Xvar(varname numeric) 
-  [Refpts(numlist ascending min=2) noEXRef
-  Knots(numlist ascending min=2) noEXKnot
+syntax [ newvarlist ] [if] [in] ,
+  [
+  Refpts(numlist min=2) noEXRef OMit(numlist min=1 max=1) BAse(numlist min=1 max=1)
+  Xvar(varname numeric)
+  Knots(numlist min=2) noEXKnot
   Power(integer 0)
   Generate(string) Type(string)
-  LABfmt(string)]
+  LABfmt(string) LABPrefix(string)
+  ]
   ;
+/*
+ refpts() specifies the reference points.
+ noexref specifies that the list of reference points will not be extended.
+ omit() specifies a single reference point,
+  whose corresponding reference spline will be omitted,
+  leaving an incomplete basis of reference splines,
+  which can be completed by adding a constant vector
+  equal to 1 in all observations.
+ base() specifies a single reference point,
+  whose corresponding reference spline will be set to zero,
+  leaving an incomplete basis of reference splines
+  suitable for inclusion in a Stata Version 11 design matrix,
+  which can be completed by adding a constant vector
+  equal to 1 in all observations.
+ Other options correspond to the options of the same name for -bsspline-.
+*/
+
+*
+ Set default label prefix
+*;
+if `"`labprefix'"'=="" {;
+  local labprefix "Spline at ";
+};
 
 * Rename varlist to splist *;
 local splist "`varlist'";macro drop varlist;
@@ -57,14 +82,21 @@ mark `touse' `if' `in';markout `touse' `xvar';
 *
  Check that there are observations
  and initialize reference points if necessary
+ and sort reference points, removing duplicates
 *;
 quietly summarize `xvar' if(`touse');
 if((r(N)<=0)|(r(N)==.)){;error 2000;};
 else if("`refpts'"==""){;
   local rmin=r(min);local rmax=r(max);local refpts "`rmin' `rmax'";
 };
+numlist "`refpts'", sort;
+local refpts "`r(numlist)'";
+local refpts: list uniq refpts;
 
-* Initialize knots if absent *;
+*
+ Initialize knots if absent
+ and sort knots, removing duplicates
+*;
 if("`knots'"==""){;
   * Create knots *;
   if(mod(`power',2)){;
@@ -92,16 +124,19 @@ if("`knots'"==""){;
     macro drop refp2 nrefp2;
   };
 };
+numlist "`knots'", sort;
+local knots "`r(numlist)'";
+local knots: list uniq knots;
 
 * Extend reference points if requested *;
 if("`exref'"!="noexref"){;
   local intp2=int(`power'/2);
   nlext,inlist(`refpts') next(`intp2');
   local refpts "`r(numlist)'";
-}
+};
 
 *
- Initialise local macros splist, nref, nknot, nspline and generat
+ Initialise local macros splist, nref, nknot, nspline and generate
  (if necessary)
 *;
 local nref:word count `refpts';
@@ -111,11 +146,11 @@ if("`splist'"!=""){;
   * Spline list has been provided by user *;
   local nspline:word count `splist';
   * Set generate prefix (for column names of knot matrix) *;
-  if("`generat'"==""){;local generat="c";};
+  if("`generate'"==""){;local generate="c";};
 };
 else{;
   * Spline list must be generated *;
-  if("`generat'"==""){;
+  if("`generate'"==""){;
     disp in red
      "Spline list unspecified - generate() or varlist required";
     error 498;
@@ -127,10 +162,10 @@ else{;
     local nspline=`nref';
     if(`nspline'<=0){;local nspline=1;};
     * Generate spline list *;
-    local splist "`generat'1";
+    local splist "`generate'1";
     local i1=1;
     while(`i1'<`nspline'){;local i1=`i1'+1;
-      local splist "`splist' `generat'`i1'";
+      local splist "`splist' `generate'`i1'";
     };
   };
 };
@@ -165,6 +200,11 @@ else if(`nref'<`nspline'){;
   local refpts "`r(numlist)'";
   local nref:word count `refpts';
 };
+if `nref'>c(matsize) {;
+  disp as error "Too many reference points for current matsize.";
+  error 908;
+};
+
 
 *
  Check that generated spline names are not too long
@@ -185,18 +225,65 @@ while(`i1'<`nspline'){;local i1=`i1'+1;
   tempvar b`i1';
   if(`i1'==1){;local bsplist="`b`i1''";};
   else{;local bsplist "`bsplist' `b`i1''";};
-}
+};
+
+*
+ Check that omit() is in the list of reference points
+ (if it is provided),
+ and store its position in macro omitpos.
+*;
+if "`omit'"!="" {;
+  local omitpres=0;
+  local i1=0;
+  foreach RP of num `refpts' {;
+    local i1=`i1'+1;
+    if `RP'==`omit' {;
+      local omitpres=1;
+      local omitpos=`i1';
+    };
+  };
+  if !`omitpres' {;
+    disp as error "omit(`omit') is not present in the following list of reference points:"
+      _n as error "`refpts'";
+    error 498;
+  };
+};
+
+*
+ Check that base() is in the list of reference points
+ (if it is provided),
+ and store its position in macro basepos.
+*;
+if "`base'"!="" {;
+  local basepres=0;
+  local i1=0;
+  foreach RP of num `refpts' {;
+    local i1=`i1'+1;
+    if `RP'==`base' {;
+      local basepres=1;
+      local basepos=`i1';
+    };
+  };
+  if !`basepres' {;
+    disp as error "base(`base') is not present in the following list of reference points:"
+      _n as error "`refpts'";
+    error 498;
+  };
+};
 
 *
  Create temporary vector refv
  containing the reference values
 *;
 tempname refv;
-local refvv:word 1 of `refpts';
-local i1=1;
-while(`i1'<`nref'){;local i1=`i1'+1;
+forv i1=1(1)`nref' {;
   local refi1:word `i1' of `refpts';
-  local refvv "`refvv',`refi1'";
+  if `i1'==1 {;
+    local refvv "`refi1'";
+  };
+  else {;
+    local refvv "`refvv',`refi1'";
+  };
 };
 capture quietly matr def `refv'=(`refvv');
 if(_rc==908){;
@@ -210,17 +297,21 @@ else if(_rc==130){;
   disp in red "`refvv'";
   error 130;
 };
-else if(_rc!=0){;error _rc;};
+else if(_rc!=0){;
+  error `=_rc';
+};
 * Set row and column names *;
 matr rownames `refv'=`xvar';
 matr colnames `refv'=`splist';
 
 *
- Preserve original data
- (to create B-splines for reference values)
+ Create temporary dataframe
+ (in which to create B-splines for reference values)
+ and begin work in temporary frame (UNINDENTED).
 *;
-preserve;
-drop _all;
+tempname tempframe;
+frame create `tempframe';
+frame `tempframe' {;
 
 * Create x-variate of reference values *;
 matr def `refv'=`refv'';
@@ -266,8 +357,13 @@ tempname sptran;
 quietly mkmat `bsplist',matr(`sptran');
 matr rownames `sptran'=`splist';
 
-* Restore original data *;
-restore;
+*
+ End work in temporary frame (UNINDENTED), 
+ return to original data frame,
+ and drop temporary frame.
+*;
+};
+frame drop `tempframe';
 
 *
  Check that matrix of B-splines is non-singular,
@@ -299,8 +395,9 @@ return add;
 * Transform B-splines to reference value splines *;
 tempname cref coefv;
 local i1=0;
-while(`i1'<`nspline'){;local i1=`i1'+1;
-  local spline:word `i1' of `splist';
+while(`i1'<`nspline' ){;
+  local i1=`i1'+1;
+  local spline: word `i1' of `splist';
   scal `cref'=`refv'[1,`i1'];
   matr def `coefv'=`sptran'[1...,`i1']';
   matr scor `type' `spline'=`coefv';
@@ -312,23 +409,76 @@ while(`i1'<`nspline'){;local i1=`i1'+1;
     local incomp=(`cref'<`xinf')|(`cref'>`xsup');
   };
   if(`incomp'){;
-    label variable `spline' "Spline at `fcref' (INCOMPLETE)";
+    label variable `spline' "`labprefix'`fcref' (INCOMPLETE)";
   };
   else{;
-    label variable `spline' "Spline at `fcref'";
+    label variable `spline' "`labprefix'`fcref'";
   };
   format `spline' %8.4f;
+  char `spline'[xvalue] "`=`cref''";
+  char `spline'[xvar] "`xvar'";
+  if "`base'"=="" char `spline'[basestat] "0";
+  else if `base'==`cref' char `spline'[basestat] "1";
+  else char `spline'[basestat] "0";
 };
 
 * Return results not created by bspline *;
+return local labprefix `"`labprefix'"';
 return local splist "`splist'";
 return local refpts "`refpts'";
 return matrix refv `refv';
 
+*
+ Remove omitted spline if omit() is provided
+*;
+if "`omit'"!="" {;
+  local refdrop: word `omitpos' of `refpts';
+  local spdrop: word `omitpos' of `splist';
+  local splist: list splist - spdrop;
+  drop `spdrop';
+  return scalar nspline=`nspline'-1;
+  return local splist "`splist'";
+  return scalar omit=`omit';
+  if(`power'==0){;
+    local incomp=(`refdrop'<`xinf')|(`refdrop'>=`xsup');
+  };
+  else{;
+    local incomp=(`refdrop'<`xinf')|(`refdrop'>`xsup');
+  };
+  if `incomp' {;
+    disp as text "Warning: omitted spline at `refdrop' is outside the completeness region."
+      _n as text "Model parameters may not be interpretable in the usual way.";
+  };
+};
+
+*
+ Set base spline to zero if base() is provided
+*;
+if "`base'"!="" {;
+  local refzero: word `basepos' of `refpts';
+  local spzero: word `basepos' of `splist';
+  qui {;
+    replace `spzero'=0 if `touse';
+    compress `spzero';
+  };
+  return local splist "`splist'";
+  return scalar base=`base';
+  if(`power'==0){;
+    local incomp=(`refzero'<`xinf')|(`refzero'>=`xsup');
+  };
+  else{;
+    local incomp=(`refzero'<`xinf')|(`refzero'>`xsup');
+  };
+  if `incomp' {;
+    disp as text "Warning: base spline at `refzero' is outside the completeness region."
+      _n as text "Model parameters may not be interpretable in the usual way.";
+  };
+};
+
 end;
 
 program define nlext,rclass;
-version 6.0;
+version 10.0;
 *
  Take, as input, an input numlist in inlist
  and extend it to the left (if left present)
