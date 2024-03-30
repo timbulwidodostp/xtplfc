@@ -3,6 +3,8 @@ Partially Linear Functional Coefficient Panel Data Models Use xtplfc With STATA 
 
 Fitting Partially Linear Functional Coefficient Panel Data Models Use xtplfc With STATA 18
 
+https://www.youtube.com/watch?v=Y7kYJLBEyAY
+
 Olah Data Semarang
 
 WA : +6285227746673 (085227746673)
